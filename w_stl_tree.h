@@ -296,6 +296,17 @@ inline void _Rb_tree_rebalance(_Rb_tree_node_base *x, _Rb_tree_node_base *& root
 }
 
 
+// 参考网址：https://www.jianshu.com/p/84416644c080
+
+/*
+1. 无子节点时，删除节点可能为红色或者黑色；
+1.1 如果为红色，直接删除即可，不会影响黑色节点的数量；
+1.2 如果为黑色，则需要进行删除平衡的操作了；(主要操作)
+2. 只有一个子节点时，删除节点只能是黑色，其子节点为红色，否则无法满足红黑树的性质了。 此时用删除节点的子节点接到父节点，且将子节点颜色涂黑，保证黑色数量。
+3. 有两个子节点时，与二叉搜索树一样，使用后继节点作为替换的删除节点，情形转至为1或2处理。
+
+*/
+
 inline _Rb_tree_node_base *_Rb_tree_reblance_for_erase(_Rb_tree_node_base *z,
 																	_Rb_tree_node_base *& root,
 																	_Rb_tree_node_base *& leftmost,
@@ -304,7 +315,7 @@ inline _Rb_tree_node_base *_Rb_tree_reblance_for_erase(_Rb_tree_node_base *z,
 	// y为最终要删除节点
 	_Rb_tree_node_base *y = z;
 	_Rb_tree_node_base *x = NULL; //x 为要删除节点(真)的子节点
-	_Rb_tree_node_base *x_parent = NULL;
+	_Rb_tree_node_base *x_parent = NULL; //x_parent 为删除节点被删除后x的父亲节点
 
 	// z最多有一个非空孩子，取其必定为空的孩子之外的孩子，y == z，x可能为空
 	if (y->m_left == NULL)
@@ -431,24 +442,33 @@ inline _Rb_tree_node_base *_Rb_tree_reblance_for_erase(_Rb_tree_node_base *z,
 		}
 	}
 
-	//删除节点为红色时，树层级不变，不需要做额外处理
+	//删除节点为红色时，树层级不变，不需要做额外处理，为黑色时，进如下处理
+	// 注意，经过前面几个步骤处理，y节点已经被删除，x为平衡节点
 	if (y->m_color != _S_rb_tree_red)
 	{
 		//往上递归 处理
 		while (x != root && (x == NULL || x->m_color == _S_rb_tree_black))
 		{
+			// 定位w，w为x的兄弟节点，兄弟在右边
 			if (x == x_parent->m_left)
 			{
 				_Rb_tree_node_base* w = x_parent->m_right;
-				
+
+				// 判断w颜色，如果w为红色，则表明w的两个孩子和w的父亲都是黑色
+				// 1.1 兄弟在右边，且为红色时，需要转成兄弟为黑色的情况
+				// --> 1.2
 				if (w->m_color == _S_rb_tree_red)
 				{
 					w->m_color = _S_rb_tree_black;
 					x_parent->m_color = _S_rb_tree_red;
+					//兄弟在右，则以统一父节点进行左旋，将兄弟节点往上提一级
 					_Rb_tree_rotate_left(x_parent, root);
-					x = x_parent->m_right;
+					// w更新为旋转后x_parent的右节点
+					w = x_parent->m_right;
 				}
-
+				
+				// 1.2 往上递归
+				//兄弟子节点全黑，将兄弟节点变红，将统一父亲节点变成新的平衡节点x，做递归处理
 				if ((w->m_left == 0 || w->m_left->m_color == _S_rb_tree_black) &&
 					(w->m_right == 0 || w->m_right->m_color == _S_rb_tree_black))
 				{
@@ -458,13 +478,80 @@ inline _Rb_tree_node_base *_Rb_tree_reblance_for_erase(_Rb_tree_node_base *z,
 				}
 				else
 				{
-				
+					// 1.3 --> 1.4
+					// 兄弟右孩子为黑色，先以兄弟节点为基点右旋，交换兄弟节点和兄弟左孩子颜色
+					// 转到 兄在右 兄弟右孩子红色的情况
+					if (w->m_right == 0 || w->m_right->m_color == _S_rb_tree_black)
+					{
+						if (w->m_left) w->m_left->m_color = _S_rb_tree_black;
+						w->m_color = _S_rb_tree_red;
+						_Rb_tree_rotate_right(w, root);
+						w = x->m_parent->m_right;
+					}
+
+					// 1.4 
+					// 兄弟在右边，且兄弟右孩子为红色
+					//  兄弟节点转成父节点颜色，父节点变黑色(兄弟为黑色，也就是两个节点互换颜色)
+					w->m_color = x_parent->m_color;
+					x_parent->m_color = _S_rb_tree_black;
+					// 以统一父节点为基点进行左旋，兄弟节点右孩子涂黑
+					// 平衡思路为：需要平衡的子树这路，增加了一个黑色的父节点，高度补齐
+					// 兄弟节点这路，右孩子从红变黑，丢失的黑色兄弟节点的高度也补回来了
+					if (w->m_right) w->m_right->m_color = _S_rb_tree_black;
+					_Rb_tree_rotate_left(x_parent, root);
+					break;
 				}
 
 			}
+			else if (x == x_parent->m_right)
+			{
+				//对称情况，如上
+				_Rb_tree_node_base* w = x_parent->m_left;
+
+				if (w->m_color == _S_rb_tree_red)
+				{
+					w->m_color = _S_rb_tree_black;
+					x_parent->m_color = _S_rb_tree_red;
+					_Rb_tree_rotate_right(x_parent, root);
+					w = x_parent->m_left;
+				}
+
+				if ((w->m_left == NULL || w->m_left->m_color == _S_rb_tree_black)
+					&& (w->m_right == NULL || w->m_right->m_color == _S_rb_tree_black))
+				{
+					w->m_color = _S_rb_tree_red;
+					x = x_parent;
+					x_parent = x_parent->m_parent;
+				}
+				else
+				{
+					if (w->m_left == NULL || w->m_left->m_color == _S_rb_tree_black)
+					{
+						w->m_left->m_color = _S_rb_tree_red;
+						if (w->m_right)
+						{
+							w->m_color = _S_rb_tree_black;
+						}
+						_Rb_tree_rotate_left(w, root);
+						w = x_parent->m_left;
+					}
+
+					w->m_color = x_parent->m_color;
+					x_parent->m_color = _S_rb_tree_black;
+					if (w->m_left)
+					{
+						w->m_left->m_color = _S_rb_tree_black;
+					}
+					_Rb_tree_rotate_right(x_parent, root);
+					break;
+				}
+			}			
 		}
+		// 往上递归时，遇到平衡节点颜色为红色情况，直接变黑，则路径下子树长度+1，达到平衡
+		if (x) x->m_color = _S_rb_tree_black;
 	}
 
+	return y;
 }
 
 }
